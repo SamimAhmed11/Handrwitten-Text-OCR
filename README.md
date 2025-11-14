@@ -14,7 +14,6 @@ The project includes preprocessing, CTC decoding, and a web UI for uploading ima
 -  Works inside a Conda environment
 
  Project Structure
-app.py
 app_words.py
 models/ocr_model.keras
 templates/index.html
@@ -32,7 +31,7 @@ conda activate ocr-env
 pip install tensorflow numpy pandas opencv-python Pillow matplotlib flask
 
  Running the Application
-python app.py
+python app_words.py
 Open: http://localhost:5000/ui
 
  API Usage
