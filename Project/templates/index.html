@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Handwriting to Text</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{
+      --bg:#0b0b0b; --card:#161616; --border:#2a2a2a; --muted:#9aa0a6; --fg:#eaeaea;
+      --accent:#5b8cff; --accent-dim:#3a5aa4; --dash:#3a3a3a; --ring:#2c89ff66;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Arial;padding:24px;max-width:900px;margin:auto;background:var(--bg);color:var(--fg)}
+    header{margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:12px}
+    h2{margin:0}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .col{flex:1 1 380px; min-width:320px}
+    #previewBox{border:1px dashed var(--dash);border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:8px; align-items:center; justify-content:center; min-height:280px}
+    #preview{max-width:100%;max-height:260px;border-radius:8px;border:1px solid var(--border); display:none}
+    .meta{font-size:12px; color:var(--muted); display:none}
+    button{background:var(--accent);border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600}
+    button.secondary{background:#22252c}
+    button.ghost{background:transparent; color:var(--muted); border:1px dashed var(--dash)}
+    button:disabled{background:var(--accent-dim);cursor:not-allowed}
+    button:focus-visible{outline:0; box-shadow:0 0 0 3px var(--ring)}
+    input[type=file]{display:block;margin:8px 0 12px}
+    pre{white-space:pre-wrap;background:#0f0f0f;border:1px solid var(--border);border-radius:8px;padding:12px;margin:0}
+    .hint{margin-top:8px;color:var(--muted);font-size:12px}
+    .tools{display:flex; gap:8px; flex-wrap:wrap}
+    .line{display:flex; gap:8px; align-items:flex-start}
+    .flexcol{display:flex; flex-direction:column; gap:10px}
+    /* Hide the per-line block by default; shown only when multiple lines exist */
+    #lines{display:none}
+    /* Simple chip label for lines */
+    .label{font-size:12px; color:var(--muted); margin-top:6px}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Handwriting to Text</h2>
+    <small id="hint">Select an image and click Convert to get typed text.</small>
+  </header>
+
+  <div class="card row">
+    <div class="col">
+      <label for="file">Upload image</label>
+      <input id="file" type="file" accept="image/*" aria-describedby="hint" />
+      <div id="previewBox">
+        <img id="preview" alt="Selected image preview will appear here">
+        <div id="meta" class="meta"></div>
+        <div id="placeholder" style="color:var(--muted); font-size:14px; text-align:center">
+          No image selected. Choose a file to preview.
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap">
+        <button id="convert" disabled>Convert</button>
+        <button id="clear" class="secondary">Clear</button>
+      </div>
+      <div class="hint">This will POST to /predict with multipart/form-data field name "image".</div>
+    </div>
+
+    <div class="col">
+      <label for="out">Result</label>
+      <div class="flexcol">
+        <!-- Single, main result box -->
+        <div class="line" id="fullRow">
+          <pre id="out" style="flex:1">No result yet.</pre>
+          <div class="tools">
+            <button id="copyAll" class="ghost" disabled>Copy</button>
+          </div>
+        </div>
+
+        <!-- Optional per-line copies, only shown when there are 2+ lines -->
+        <div id="linesLabel" class="label" style="display:none">Lines</div>
+        <div id="lines" class="flexcol"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('file');
+    const preview = document.getElementById('preview');
+    const meta = document.getElementById('meta');
+    const placeholder = document.getElementById('placeholder');
+    const btn = document.getElementById('convert');
+    const clearBtn = document.getElementById('clear');
+
+    const out = document.getElementById('out');
+    const copyAllBtn = document.getElementById('copyAll');
+
+    const linesWrap = document.getElementById('lines');
+    const linesLabel = document.getElementById('linesLabel');
+
+    let currentObjectURL = null;
+
+    // Re-select same file triggers change
+    fileInput.addEventListener('click', () => { fileInput.value = ''; }); // [web:520]
+
+    function setPreviewFile(f){
+      if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);                // release old [web:525]
+      currentObjectURL = URL.createObjectURL(f);
+      preview.src = currentObjectURL;
+      preview.style.display = 'block';
+      meta.textContent = `${f.name} • ${Math.round(f.size/1024)} KB`;
+      meta.style.display = 'block';
+      placeholder.style.display = 'none';
+    }
+
+    function resetPreview(){
+      if (currentObjectURL) { URL.revokeObjectURL(currentObjectURL); currentObjectURL = null; } // [web:525]
+      preview.removeAttribute('src');
+      preview.style.display = 'none';
+      meta.textContent = '';
+      meta.style.display = 'none';
+      placeholder.style.display = 'block';
+    }
+
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0]; // single File [web:521]
+      if (!f) {
+        resetPreview();
+        btn.disabled = true;
+        return;
+      }
+      setPreviewFile(f);
+      btn.disabled = false;
+      out.textContent = 'Ready to convert.';
+      copyAllBtn.disabled = true;
+      clearLines();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      resetPreview();
+      btn.disabled = true;
+      out.textContent = 'No result yet.';
+      copyAllBtn.disabled = true;
+      clearLines();
+    });
+
+    // Clipboard with secure-context check + fallback
+    async function copyText(text){
+      if (navigator.clipboard && window.isSecureContext){                         // [web:537][web:501]
+        try { await navigator.clipboard.writeText(text); return; } catch(e){}
+      }
+      const ta = document.createElement('textarea');                               // fallback [web:493]
+      ta.value = text; ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.left='-9999px';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+    }
+
+    copyAllBtn.addEventListener('click', () => {
+      const txt = out.textContent || '';
+      if (!txt.trim()) { alert('Nothing to copy'); return; }
+      copyText(txt);
+    });
+
+    function clearLines(){
+      linesWrap.replaceChildren();
+      linesWrap.style.display = 'none';
+      linesLabel.style.display = 'none';
+    }
+
+    function renderResultToUI(fullText){
+      const text = fullText || '';
+      // Show once in main result box
+      out.textContent = text;
+      copyAllBtn.disabled = text.trim().length === 0;
+
+      // If only a single line (or empty), hide the per-line section
+      const lines = text.split(/\r?\n/).filter(s => s.trim().length > 0);
+      if (lines.length <= 1){
+        clearLines();  // no secondary box
+        return;
+      }
+
+      // Otherwise, render each line with its own Copy button
+      linesWrap.replaceChildren();
+      for (const line of lines){
+        const row = document.createElement('div');
+        row.className = 'line';
+        const pre = document.createElement('pre'); pre.style.flex = '1'; pre.textContent = line;
+        const tools = document.createElement('div'); tools.className = 'tools';
+        const btn = document.createElement('button'); btn.className='ghost'; btn.textContent='Copy';
+        btn.addEventListener('click', ()=>copyText(line));
+        tools.appendChild(btn);
+        row.appendChild(pre); row.appendChild(tools);
+        linesWrap.appendChild(row);
+      }
+      // Show the secondary block only now
+      linesLabel.style.display = 'block';
+      linesWrap.style.display = 'flex';
+    }
+
+    // Convert -> POST to /predict
+    btn.addEventListener('click', async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { out.textContent = 'Please choose an image first.'; return; }
+      btn.disabled = true;
+      const oldLabel = btn.textContent;
+      btn.textContent = 'Converting...';
+      try {
+        const fd = new FormData();
+        fd.append('image', f); // must match backend: request.files["image"] [web:521]
+        const r = await fetch('/predict', { method: 'POST', body: fd });
+        const text = await r.text();
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${text}`);
+        const j = JSON.parse(text);
+        if (j.error){
+          out.textContent = `Error: ${j.error}`;
+          copyAllBtn.disabled = true;
+          clearLines();
+        } else {
+          renderResultToUI(j.text || '');
+        }
+      } catch (e) {
+        out.textContent = 'Request failed: ' + (e?.message || 'Unknown');
+        copyAllBtn.disabled = true;
+        clearLines();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldLabel;
+      }
+    });
+  </script>
+</body>
+</html>
